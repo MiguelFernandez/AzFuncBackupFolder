@@ -19,6 +19,8 @@ namespace AzFuncBackupFolder
     public static class Backup2Storage
     {
         private static long _uploadFileSize;
+        private static long _uploadProgressPercentageTotal = 0;
+        private static long _downloadProgressBytes = 0;
 
         [FunctionName("Backup")]
         public static async Task<IActionResult> Run(
@@ -38,6 +40,7 @@ namespace AzFuncBackupFolder
             {
 
                 var url = $"https://{appServiceName}.scm.azurewebsites.net/api/zip/site/wwwroot/";
+
                 var uri = new Uri(url);
                 using (WebClient wc = new WebClient())
                 {
@@ -47,6 +50,9 @@ namespace AzFuncBackupFolder
                     wc.Headers[HttpRequestHeader.Authorization] = string.Format(
                         "Basic {0}", credentials);
 
+                    wc.DownloadProgressChanged += (s, e) => DownloadProgressCallback(s, e, log);
+
+                    log.LogInformation("Starting download of app service files");
                     await wc.DownloadFileTaskAsync(uri, $"d:\\home\\wwwroot-backup.zip");
                     log.LogInformation($"Finished downloading file to d:\\home drive");
                     await UploadFileToAzStorage(log);
@@ -97,24 +103,59 @@ namespace AzFuncBackupFolder
             }
             catch (Exception ex)
             {
-                log.LogError(ex.Message);
-                log.LogError(ex.StackTrace);
+                var errorJson = Newtonsoft.Json.JsonConvert.SerializeObject(ex, Formatting.Indented, new JsonSerializerSettings()
+                {
+                    ReferenceLoopHandling = ReferenceLoopHandling.Ignore
+                });
+                log.LogError(errorJson);
                 throw;
             }
 
 
         }
 
-        private static string GetProgressPercentage(double totalSize, double currentSize)
+        private static double GetProgressPercentage(double totalSize, double currentSize)
         {
-            return Math.Round((currentSize / totalSize) * 100).ToString();
+            return ((currentSize / totalSize) * 100);
         }
 
         private static void UploadProgressChanged(object sender, long bytesUploaded, ILogger log)
         {
             //https://www.craftedforeveryone.com/upload-or-download-file-from-azure-blob-storage-with-progress-percentage-csharp/
             var progressPercentage = GetProgressPercentage(_uploadFileSize, bytesUploaded);
-            log.LogInformation($"{progressPercentage}% uploaded");
+            var test = Convert.ToInt64(progressPercentage);
+            test = test.Round(10);
+
+            if (test.Round(10) != _uploadProgressPercentageTotal)
+            {
+                _uploadProgressPercentageTotal = test.Round(10);
+                log.LogInformation($"{_uploadProgressPercentageTotal}% uploaded");
+            }
+
+
+           
+        }
+        private static void DownloadProgressCallback(object sender, DownloadProgressChangedEventArgs e, ILogger log)
+        {
+            if (e.BytesReceived.Round(1000000) != _downloadProgressBytes)
+            {
+                _downloadProgressBytes = e.BytesReceived.Round(1000000);
+                log.LogInformation($"Downloaded {e.BytesReceived} bytes");
+            }
+            
+            
+           
+
+        }
+    }
+    public static class MathExtensions
+    {
+        public static long Round(this long i, long nearest)
+        {
+            if (nearest <= 0 || nearest % 10 != 0)
+                throw new ArgumentOutOfRangeException("nearest", "Must round to a positive multiple of 10");
+
+            return (i + 5 * nearest / 10) / nearest * nearest;
         }
     }
 }
